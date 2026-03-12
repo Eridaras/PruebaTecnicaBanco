@@ -2,6 +2,16 @@
 
 API REST para gestión de cuentas bancarias y movimientos financieros.
 
+## Documentación
+
+| Documento | Descripción |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Arquitectura, decisiones de diseño, flujos detallados |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Referencia completa de endpoints, schemas y ejemplos |
+| [docs/DOMAIN_MODEL.md](docs/DOMAIN_MODEL.md) | Entidades JPA, schema SQL, relaciones e invariantes |
+| [docs/BUSINESS_RULES.md](docs/BUSINESS_RULES.md) | Reglas de negocio, validaciones y manejo de concurrencia |
+| [AI_CONTEXT.md](AI_CONTEXT.md) | Contexto compacto del sistema para revisión por IA |
+
 ## Requisitos
 
 - Java 21+

@@ -1,0 +1,189 @@
+# Modelo de Dominio
+
+## Diagrama de Entidades
+
+```
+┌──────────────────────┐         ┌──────────────────────────┐
+│       CUSTOMER       │  1   *  │         ACCOUNT           │
+├──────────────────────┤─────────├──────────────────────────┤
+│ id: Long (PK)        │         │ id: Long (PK)             │
+│ name: String(150)    │         │ account_number: String(20)│
+│ document_id: String  │         │ type: AccountType         │
+│   (20, UNIQUE)       │         │ balance: Decimal(19,4)    │
+└──────────────────────┘         │ customer_id: Long (FK)    │
+                                 └────────────┬─────────────┘
+                                              │ 1
+                                              │
+                                              │ *
+                                 ┌────────────┴─────────────┐
+                                 │         MOVEMENT          │
+                                 ├──────────────────────────┤
+                                 │ id: Long (PK)             │
+                                 │ type: MovementType        │
+                                 │ amount: Decimal(19,4)     │
+                                 │ description: String(255)  │
+                                 │ created_at: LocalDateTime │
+                                 │ account_id: Long (FK)     │
+                                 │ related_account_id: Long  │
+                                 │   (FK, nullable)          │
+                                 └──────────────────────────┘
+                                              │
+                                    related_account_id apunta
+                                    también a ACCOUNT (self-ref)
+```
+
+---
+
+## Entidades JPA
+
+### Customer
+
+```java
+@Entity @Table(name = "customers",
+  uniqueConstraints = @UniqueConstraint(columnNames = "document_id"))
+```
+
+| Campo | Java Type | DB Column | Restricciones |
+|---|---|---|---|
+| id | Long | BIGINT | PK, AUTO_INCREMENT |
+| name | String | name VARCHAR(150) | NOT NULL |
+| documentId | String | document_id VARCHAR(20) | NOT NULL, UNIQUE |
+| accounts | List\<Account\> | — | @OneToMany, LAZY, CASCADE ALL |
+
+---
+
+### Account
+
+```java
+@Entity @Table(name = "accounts",
+  uniqueConstraints = @UniqueConstraint(columnNames = "account_number"))
+```
+
+| Campo | Java Type | DB Column | Restricciones |
+|---|---|---|---|
+| id | Long | BIGINT | PK, AUTO_INCREMENT |
+| accountNumber | String | account_number VARCHAR(20) | NOT NULL, UNIQUE |
+| type | AccountType | type VARCHAR(10) | NOT NULL, enum como STRING |
+| balance | BigDecimal | balance DECIMAL(19,4) | NOT NULL |
+| customer | Customer | customer_id BIGINT | FK → customers.id, NOT NULL, LAZY |
+| movements | List\<Movement\> | — | @OneToMany, LAZY, CASCADE ALL |
+
+---
+
+### Movement
+
+```java
+@Entity @Table(name = "movements")
+```
+
+| Campo | Java Type | DB Column | Restricciones |
+|---|---|---|---|
+| id | Long | BIGINT | PK, AUTO_INCREMENT |
+| type | MovementType | type VARCHAR(15) | NOT NULL, enum como STRING |
+| amount | BigDecimal | amount DECIMAL(19,4) | NOT NULL |
+| description | String | description VARCHAR(255) | nullable |
+| createdAt | LocalDateTime | created_at TIMESTAMP | NOT NULL, @CreationTimestamp, no actualizable |
+| account | Account | account_id BIGINT | FK → accounts.id, NOT NULL, LAZY |
+| relatedAccount | Account | related_account_id BIGINT | FK → accounts.id, nullable, LAZY |
+
+---
+
+## Enums
+
+### AccountType
+
+```java
+public enum AccountType {
+    AHORRO,
+    CORRIENTE
+}
+```
+
+Persistido como `VARCHAR(10)` con `@Enumerated(EnumType.STRING)`.
+
+---
+
+### MovementType
+
+```java
+public enum MovementType {
+    DEPOSITO,
+    RETIRO,
+    TRANSFERENCIA
+}
+```
+
+Persistido como `VARCHAR(15)` con `@Enumerated(EnumType.STRING)`.
+
+---
+
+## Semántica de `related_account_id`
+
+El campo `related_account_id` en `MOVEMENT` resuelve el requerimiento de trazabilidad bidireccional en transferencias:
+
+| `type` | `account_id` | `related_account_id` | Semántica |
+|---|---|---|---|
+| `DEPOSITO` | cuenta que recibe | NULL | Entrada de dinero |
+| `RETIRO` | cuenta que entrega | NULL | Salida de dinero |
+| `TRANSFERENCIA` | cuenta del movimiento | cuenta contraparte | Entrada o salida inter-cuenta |
+
+**Ejemplo — Transferencia de ACC-001 a ACC-003 por $150:**
+
+```
+Movimiento 1: account=ACC-001, type=TRANSFERENCIA, amount=150, relatedAccount=ACC-003
+              → "Pago deuda → ACC-003"  (salida desde ACC-001)
+
+Movimiento 2: account=ACC-003, type=TRANSFERENCIA, amount=150, relatedAccount=ACC-001
+              → "Pago deuda ← ACC-001"  (entrada en ACC-003)
+```
+
+Consultando movimientos de ACC-001, se ve la salida con referencia a ACC-003.
+Consultando movimientos de ACC-003, se ve la entrada con referencia a ACC-001.
+
+---
+
+## Schema SQL Generado por Hibernate
+
+```sql
+CREATE TABLE customers (
+    id          BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    name        VARCHAR(150) NOT NULL,
+    document_id VARCHAR(20)  NOT NULL,
+    CONSTRAINT uk_customers_document_id UNIQUE (document_id)
+);
+
+CREATE TABLE accounts (
+    id             BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    account_number VARCHAR(20)    NOT NULL,
+    type           VARCHAR(10)    NOT NULL,
+    balance        DECIMAL(19, 4) NOT NULL,
+    customer_id    BIGINT         NOT NULL,
+    CONSTRAINT uk_accounts_account_number UNIQUE (account_number),
+    CONSTRAINT fk_accounts_customer FOREIGN KEY (customer_id) REFERENCES customers(id)
+);
+
+CREATE TABLE movements (
+    id                  BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    type                VARCHAR(15)    NOT NULL,
+    amount              DECIMAL(19, 4) NOT NULL,
+    description         VARCHAR(255),
+    created_at          TIMESTAMP      NOT NULL,
+    account_id          BIGINT         NOT NULL,
+    related_account_id  BIGINT,
+    CONSTRAINT fk_movements_account         FOREIGN KEY (account_id)         REFERENCES accounts(id),
+    CONSTRAINT fk_movements_related_account FOREIGN KEY (related_account_id) REFERENCES accounts(id)
+);
+```
+
+> `ddl-auto: create-drop` — el schema se crea al iniciar y se destruye al apagar. Para producción: `validate` con migraciones Flyway/Liquibase.
+
+---
+
+## Invariantes del Dominio
+
+1. Un `Customer` tiene `document_id` único en el sistema.
+2. Una `Account` tiene `account_number` único en el sistema.
+3. `Account.balance` nunca puede ser negativo (garantizado por validación en service, no constraint DB).
+4. `Movement.createdAt` es inmutable — establecido automáticamente por `@CreationTimestamp`.
+5. Todo `Movement` pertenece a exactamente una `Account`.
+6. `Movement.relatedAccount` es `null` para `DEPOSITO` y `RETIRO`; no-null para `TRANSFERENCIA`.
